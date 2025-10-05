@@ -1,35 +1,37 @@
+# 🧨 DDPM Training from Scratch with Hugging Face Diffusers
 
-🧨 DDPM Training from Scratch with Hugging Face Diffusers
+This repo documents a **complete, from-scratch DDPM training workflow** built with 🤗 Diffusers.
 
-This repository provides a complete, end-to-end training pipeline for a Denoising Diffusion Probabilistic Model (DDPM) using the 🤗 Hugging Face diffusers library.
-Unlike most online examples that only cover the theory or inference, this script demonstrates how to actually train a DDPM from scratch, log results, and generate samples at each epoch.
+When I was learning, most libraries and examples stopped at theory or inference and didn’t show the full training loop. **DDPMs train slowly**, so it’s easy to doubt whether things are working. To make the process transparent, I’m publishing the **entire run**—loss curves, intermediate samples, and checkpoints—so others can follow and verify their own training.
 
-⸻
+---
 
-📘 Overview
+## 📘 Overview
 
-This project trains a diffusion model (UNet2D) using the DDPM / DDIM process implemented in diffusers.
-It covers everything needed for an actual training run:
-	•	Data loading and image augmentation (datasets, torchvision)
-	•	Model setup (UNet2DModel)
-	•	Noise scheduler (DDIMScheduler)
-	•	Optimizer and learning rate scheduler
-	•	Exponential Moving Average (EMA) model for stable training
-	•	Sampling pipeline (DDIMPipeline)
-	•	Logging with TensorBoard
-	•	Distributed training via Accelerate
+This project trains a diffusion model (`UNet2DModel`) using the DDPM/DDIM process implemented in `diffusers`.  
+It includes everything needed for real training runs:
 
-You can use any image dataset available on Hugging Face Datasets, or your own custom dataset.
+- Data loading and augmentation (`datasets`, `torchvision`)
+- Model setup (`UNet2DModel`)
+- Noise scheduler (`DDIMScheduler`)
+- Optimizer and learning rate scheduler
+- EMA (Exponential Moving Average) for stable updates
+- Sampling pipeline (`DDIMPipeline`)
+- Logging with TensorBoard
+- Distributed and mixed-precision training via `Accelerate`
 
-⸻
+You can use any image dataset on Hugging Face Datasets or your own local dataset.
 
-⚙️ Key Components Explained
+---
 
-🧩 1. UNet2DModel
+## ⚙️ Key Components
 
-The core neural network that predicts the noise residual given a noisy image and timestep.
-It’s the main architecture for most diffusion models, consisting of downsampling, attention, and upsampling blocks.
+### UNet2DModel
 
+The core neural network that predicts the **noise residual** from a noisy image and timestep.  
+It’s the main backbone in diffusion models like Stable Diffusion.
+
+```python
 model = UNet2DModel(
     sample_size=args.resolution,
     in_channels=3,
@@ -39,136 +41,141 @@ model = UNet2DModel(
     down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
     up_block_types=("UpBlock2D", "AttnUpBlock2D", "UpBlock2D", "UpBlock2D"),
 )
+```
 
+---
 
-⸻
+### DDIMScheduler
 
-🔁 2. DDIMScheduler
+Defines how noise is added (forward process) and removed (reverse process).  
+Here, we use **DDIM (Deterministic Diffusion Implicit Models)** — a faster and deterministic variant of DDPM.
 
-The noise scheduler defines how noise is added (forward process) and removed (reverse process).
-Here, we use DDIM (Deterministic Diffusion Implicit Models), a variant of DDPM that allows faster sampling.
-
+```python
 noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
+```
 
+---
 
-⸻
+### EMA (Exponential Moving Average)
 
-⚖️ 3. EMA (Exponential Moving Average)
+EMA keeps a smoothed version of model weights for more stable training and better image generation quality.
 
-EMA keeps a smoothed version of model weights to stabilize training and produce higher-quality samples.
-
+```python
 ema_model = EMAModel(model.parameters(), decay=args.ema_max_decay, power=args.ema_power)
+```
 
+---
 
-⸻
+### Accelerate Integration
 
-🚀 4. Accelerate Integration
+The `Accelerator` from Hugging Face simplifies distributed training and mixed precision — no need to write your own DDP boilerplate.
 
-Accelerator from Hugging Face simplifies mixed-precision and distributed training — no manual DDP setup needed.
-
+```python
 accelerator = Accelerator(
     mixed_precision=args.mixed_precision,
     log_with="tensorboard",
     project_dir=logging_dir,
 )
+```
 
+---
 
-⸻
+### Diffusion Process
 
-🧠 5. Forward Diffusion Process
+Noise is added to the clean image using the scheduler, and the model learns to predict that noise back — the key objective of DDPM training.
 
-Noise is added to the clean image according to the scheduler, and the model learns to predict that noise back.
-
+```python
 noisy_images = noise_scheduler.add_noise(clean_images, noise_samples, timesteps)
 output = model(noisy_images, timesteps).sample
 loss = F.mse_loss(output, noise_samples)
+```
 
+---
 
-⸻
+## 🖼️ Sampling During Training
 
-🖼️ Sampling During Training
+At each epoch, the EMA-weighted model is used to generate sample images for visual inspection.
 
-At the end of each epoch, the EMA model generates images using DDIMPipeline for visual inspection.
-Images are logged to TensorBoard and optionally pushed to the Hugging Face Hub.
-
+```python
 pipeline = DDIMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
 images = pipeline(generator=torch.manual_seed(0), batch_size=args.eval_batch_size, num_inference_steps=50).images
+```
 
+The results are logged to TensorBoard, and optionally pushed to the Hugging Face Hub.
 
-⸻
+---
 
-🧑‍💻 How to Run
+## 🧑‍💻 How to Run
 
-1️⃣ (Optional) Use Hugging Face Mirror if you’re in China:
+### (Optional) Use a Hugging Face Mirror (for China)
 
+```bash
 export HF_ENDPOINT=https://hf-mirror.com
 echo "export HF_ENDPOINT=https://hf-mirror.com" >> ~/.bashrc
 source ~/.bashrc
+```
 
+### Run the Training
 
-⸻
+```bash
+python main.py     --dataset huggan/pokemon     --output_dir pokemon-ddpm-fixed     --resolution 64     --train_batch_size 16     --num_epochs 400     --learning_rate 1e-4     --gradient_accumulation_steps 1     --lr_warmup_steps 500     --mixed_precision no
+```
 
-2️⃣ Run the Training
+### Hardware Used
 
-python example_fixed.py \
-    --dataset huggan/pokemon \
-    --output_dir pokemon-ddpm-fixed \
-    --resolution 64 \
-    --train_batch_size 16 \
-    --num_epochs 400 \
-    --learning_rate 1e-4 \
-    --gradient_accumulation_steps 1 \
-    --lr_warmup_steps 500 \
-    --mixed_precision no
+Training was performed on **a single NVIDIA V100 GPU**.
 
+---
 
-⸻
+## 📊 Training Records
 
-3️⃣ Hardware Used
+Training logs are automatically saved with TensorBoard in `--logging_dir logs`.  
+You can visualize loss curves and sample images during training:
 
-Training was done on a single NVIDIA V100 GPU.
+```bash
+tensorboard --logdir logs
+```
 
-⸻
+### Example Observations
 
-📊 Logging and Outputs
-	•	Loss curves and generated samples are logged to TensorBoard (--logging_dir logs).
-	•	After each epoch:
-	•	EMA weights are copied to the model.
-	•	The pipeline generates a batch of images.
-	•	The images are uploaded or saved locally.
-	•	Final models are saved under --output_dir.
+- Loss (`MSE`) gradually decreases as the model learns.
+- Sample images improve in fidelity after ~100 epochs.
+- EMA weights ensure smooth convergence and consistent quality.
 
-⸻
+If you save your training history, you can include it here:
 
-🧠 Example Results
+```
+📉 Example loss curve (replace with your actual plot)
+🖼️ Example generated samples (epoch snapshots)
+```
 
-During training, you should observe:
-	•	Gradual reduction in MSE loss
-	•	Increasing visual fidelity in sampled images
-	•	Smooth convergence with EMA weights
+---
 
-⸻
+## 💾 Outputs
 
-🧾 Full Training Script
+- Trained model checkpoints in `--output_dir`
+- EMA weights stored in the same directory
+- Sample images and logs under TensorBoard `logs/`
+- Optional model push to the Hugging Face Hub
 
-<insert full code here>
+---
 
-(Paste your full training code here so others can directly run or adapt it.)
+## 🧾 Full Training Script
 
-⸻
+You can paste or link to your full Python script here (e.g., `example_fixed.py`) for reproducibility.
 
-💡 Notes
-	•	If you encounter dataset loading issues, use --dataset with another public dataset name or a local path.
-	•	For larger resolutions, increase GPU memory or use gradient checkpointing.
-	•	EMA is crucial — disabling it often degrades generation quality.
+---
 
-⸻
+## 💡 Notes
 
-📚 References
-	•	Hugging Face Diffusers
-	•	DDPM Paper (Ho et al., 2020)
-	•	DDIM Paper (Song et al., 2020)
+- If dataset loading fails, use another public dataset or a local path.
+- For higher resolutions, ensure enough GPU memory or enable gradient checkpointing.
+- EMA is strongly recommended — disabling it often harms generation quality.
 
-⸻
+---
 
-Would you like me to insert the full training code directly into the README (formatted and syntax-highlighted), or keep it as a collapsible section to keep the README shorter and cleaner?
+## 📚 References
+
+- [Hugging Face Diffusers](https://github.com/huggingface/diffusers)
+- [DDPM Paper (Ho et al., 2020)](https://arxiv.org/abs/2006.11239)
+- [DDIM Paper (Song et al., 2020)](https://arxiv.org/abs/2010.02502)
